@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Droid-2100</string>
+
+    <string name="hello_world">Hello world!</string>
+    <string name="action_settings">Settings</string>
+    <string name="but1">Poll</string>
+</resources>
