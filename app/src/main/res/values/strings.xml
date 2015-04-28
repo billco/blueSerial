@@ -4,4 +4,19 @@
     <string name="hello_world">Hello world!</string>
     <string name="action_settings">Settings</string>
     <string name="but1">Poll</string>
+
+    <string name="set_DoneButText">Done</string>
+
+    <string name="BlueMac">Blue MAC:</string>
+    <string name="gAdress">Gauge Address:</string>
+
+    <string-array name="protocols_array">
+        <item>32nds</item>
+        <item>CCW</item>
+        <item>CW</item>
+        <item>Fcrc60</item>
+        <item>Fcrc69</item>
+        <item>ModBus696</item>
+    </string-array>
+
 </resources>

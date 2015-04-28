@@ -14,9 +14,14 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ListView;
+import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.ViewSwitcher;
 
 
 import java.io.IOException;
@@ -28,6 +33,13 @@ import static android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE;
 
 public class MainActivity extends Activity {
   TextView out;
+  EditText blueMacAdr;
+  EditText gAdrEdTxt;
+  CheckBox showRawCkBx;
+
+
+  private ViewSwitcher switcher;
+  private static final int REFRESH_SCREEN = 1;
 
   private static final int REQUEST_ENABLE_BT = 1;
   private BluetoothAdapter btAdapter = null;
@@ -35,6 +47,8 @@ public class MainActivity extends Activity {
   private OutputStream outStream = null;
   private InputStream inStream = null;
   boolean polling = false;
+  boolean showRaw = false;
+
   byte adr = 1;
   int polCnts = 0;
   // Well known SPP UUID
@@ -43,7 +57,8 @@ public class MainActivity extends Activity {
 
   // Insert your server's MAC address
 //  private static String address = "00:00:00:00:00:00";
-  private static String address = "00:12:6F:00:7C:94";
+  private String address = "00:12:6F:00:7C:94";
+  private byte gAdr = 1;
 
   Handler mHandler = new Handler();
 
@@ -53,9 +68,39 @@ public class MainActivity extends Activity {
     setContentView(R.layout.activity_main);
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
+    switcher = (ViewSwitcher) findViewById(R.id.profileSwitcher);
+
     out = (TextView) findViewById(R.id.out);
 
+    blueMacAdr = (EditText) findViewById(R.id.editBlueMac);
+    blueMacAdr.setText(address);
+
+    gAdrEdTxt = (EditText) findViewById(R.id.GAdrEditText);
+    gAdrEdTxt.setText(String.format("%d", gAdr));
+
+    showRawCkBx = (CheckBox) findViewById(R.id.checkBox);
+    showRawCkBx.setChecked(showRaw);
+
     Button button = (Button) findViewById(R.id.button1);
+    Button set_DoneButton = (Button) findViewById(R.id.set_Done);
+
+    Spinner spinner = (Spinner) findViewById(R.id.spinner);
+    ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
+            R.array.protocols_array, android.R.layout.simple_spinner_item);
+
+// Apply the adapter to the spinner
+    spinner.setAdapter(adapter);
+
+
+    set_DoneButton.setOnClickListener(new View.OnClickListener() {
+      public void onClick(View v) {
+        String s = gAdrEdTxt.getText().toString().trim();
+        adr = (byte) Integer.parseInt(s);
+        showRaw = showRawCkBx.isChecked();
+        switcher.showPrevious();  // Sswitches to the previous view
+      }
+    });
+
 
     button.setOnClickListener(new View.OnClickListener() {
       public void onClick(View v) {
@@ -64,6 +109,7 @@ public class MainActivity extends Activity {
         polCnts = 0;
       }
     });
+
 
     out.append("\n...In onCreate()...");
 
@@ -78,8 +124,6 @@ public class MainActivity extends Activity {
       }
     };
     mHandler.post(runnable);
-
-
   }
 
   public void poll() {
@@ -102,6 +146,9 @@ public class MainActivity extends Activity {
         if (outStream == null) return;
 
         outStream.write(buf, 0, 2);
+        if (showRaw)
+          out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
+
         for (tic[0] = 0; tic[0] < 10; ++tic[0]) {
           if (inStream.available() > 1) break;
           delay(15);
@@ -112,6 +159,8 @@ public class MainActivity extends Activity {
           if (rxCnt == 2) {
             lev = (((int) buf[0]) & 0xff) << 8;
             lev |= ((int) buf[1]) & 0xff;
+            if (showRaw)
+              out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
 
             while (inStream.available() > 0)
               rxCnt = inStream.read(buf, 0, 1);
@@ -121,6 +170,9 @@ public class MainActivity extends Activity {
             buf[1] = (byte) 0x02;
 
             outStream.write(buf, 0, 2);
+            if (showRaw)
+              out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
+
             for (tic[1] = 0; tic[1] < 10; ++tic[1]) {
               if (inStream.available() > 1) break;
               delay(15);
@@ -130,6 +182,9 @@ public class MainActivity extends Activity {
             if (inStream.available() > 0) {
               rxCnt = inStream.read(buf, 0, 2);
               if (rxCnt == 2) {
+                if (showRaw)
+                  out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
+
                 tmp = (((int) buf[1]) & 0x1f) << 8;
                 tmp |= ((int) buf[0]) & 0xff;
                 if ((buf[1] & 0x20) == 0) tmp *= -1;
@@ -138,8 +193,7 @@ public class MainActivity extends Activity {
             if (polCnts < 0) polCnts = 1;
             if ((polCnts % 25) == 0) out.setText("");
 
-            String message = String.format("\n%5d Level = %6.3f, Temp %5.1f, tic=%d,%d", polCnts, (float) lev / 384, ((float) tmp) * 0.2, tic[0], tic[1]);
-            out.append(message);
+            out.append(String.format("\n%5d Level = %6.3f, Temp %5.1f, tic=%d,%d", polCnts, (float) lev / 384, ((float) tmp) * 0.2, tic[0], tic[1]));
 
           }
         } else {
@@ -150,9 +204,9 @@ public class MainActivity extends Activity {
       } catch (IOException e) {
         polling = false;
         String msg = "In Poll() and an exception occurred during write: " + e.getMessage();
-            msg = msg + ".\n\nCheck that the SPP UUID: " + MY_UUID.toString() + " exists on server.\n\n";
+        msg = msg + ".\n\nCheck that the SPP UUID: " + MY_UUID.toString() + " exists on server.\n\n";
         out.append(msg);
-       // AlertBox("Fatal Error", msg);
+        // AlertBox("Fatal Error", msg);
         return;
       }
     }
@@ -186,6 +240,8 @@ public class MainActivity extends Activity {
 
     //noinspection SimplifiableIfStatement
     if (id == R.id.action_settings) {
+      polling = false;
+      switcher.showNext();  // Switches to the next view
       return true;
     }
 
