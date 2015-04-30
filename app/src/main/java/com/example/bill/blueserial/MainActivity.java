@@ -18,7 +18,6 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.ListView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.ViewSwitcher;
@@ -31,11 +30,15 @@ import java.util.UUID;
 
 import static android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE;
 
+
 public class MainActivity extends Activity {
   TextView out;
   EditText blueMacAdr;
   EditText gAdrEdTxt;
   CheckBox showRawCkBx;
+  EditText editTextPollRate;
+
+  public Sfi sf = new Sfi();
 
 
   private ViewSwitcher switcher;
@@ -46,19 +49,23 @@ public class MainActivity extends Activity {
   private BluetoothSocket btSocket = null;
   private OutputStream outStream = null;
   private InputStream inStream = null;
-  boolean polling = false;
-  boolean showRaw = false;
 
-  byte adr = 1;
+
+   byte gAdr = 1;
   int polCnts = 0;
+  final byte[] buf = new byte[256];
   // Well known SPP UUID
   private static final UUID MY_UUID =
           UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
-  // Insert your server's MAC address
-//  private static String address = "00:00:00:00:00:00";
   private String address = "00:12:6F:00:7C:94";
-  private byte gAdr = 1;
+
+  int pollRate = 1000;
+  boolean polling = false;
+  boolean showRaw = false;
+  Sfi.gageTypes gType = Sfi.gageTypes.ModBus696;
+  Sfi fi = new Sfi();
+
 
   Handler mHandler = new Handler();
 
@@ -78,25 +85,33 @@ public class MainActivity extends Activity {
     gAdrEdTxt = (EditText) findViewById(R.id.GAdrEditText);
     gAdrEdTxt.setText(String.format("%d", gAdr));
 
+    editTextPollRate = (EditText) findViewById(R.id.editTextPollRate);
+    editTextPollRate.setText(String.format("%d", pollRate));
+
     showRawCkBx = (CheckBox) findViewById(R.id.checkBox);
     showRawCkBx.setChecked(showRaw);
 
     Button button = (Button) findViewById(R.id.button1);
     Button set_DoneButton = (Button) findViewById(R.id.set_Done);
 
-    Spinner spinner = (Spinner) findViewById(R.id.spinner);
+    final Spinner spinner = (Spinner) findViewById(R.id.spinner);
     ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
             R.array.protocols_array, android.R.layout.simple_spinner_item);
-
 // Apply the adapter to the spinner
     spinner.setAdapter(adapter);
-
+    spinner.setSelection(gType.type());
 
     set_DoneButton.setOnClickListener(new View.OnClickListener() {
       public void onClick(View v) {
         String s = gAdrEdTxt.getText().toString().trim();
-        adr = (byte) Integer.parseInt(s);
+        gAdr = (byte) Integer.parseInt(s);
         showRaw = showRawCkBx.isChecked();
+        s = (String) spinner.getSelectedItem();
+        gType = Sfi.gageTypes.getTypeS(s.trim());
+        s = editTextPollRate.getText().toString().trim();
+        pollRate = Integer.parseInt(s);
+        if (pollRate < 15) pollRate = 15;
+
         switcher.showPrevious();  // Sswitches to the previous view
       }
     });
@@ -120,95 +135,143 @@ public class MainActivity extends Activity {
       @Override
       public void run() {
         if (polling) poll();
-        mHandler.postDelayed(this, 500);
+        mHandler.postDelayed(this, pollRate);
       }
     };
     mHandler.post(runnable);
   }
 
   public void poll() {
-    int[] tic = new int[2];
+    final int[] tic = new int[2];
+    //  final byte[] buf = new byte[256];
     int rxCnt = 0;
+    int rxBytes = 0;
     int lev = 0;
     int tmp = 0;
+    String outS = "";
     //  out.setText("");
-    byte[] buf = new byte[2];
-    for (int w = 0; w < 1; ++w) {
-      try {
-        if (inStream == null) return;
+    try {
+      for (int w = 0; w < 1; ++w) {
+        if ((inStream == null) || (outStream == null)) return;
 
-        while (inStream.available() > 0)
-          rxCnt = inStream.read(buf, 0, 1);
-        polCnts++;
+        if ((gType == Sfi.gageTypes.G32) ||
+                (gType == Sfi.gageTypes.CCW) ||
+                (gType == Sfi.gageTypes.CW)
+                ) {
+          while (inStream.available() > 0)
+            rxCnt = inStream.read(buf, 0, 1);
+          polCnts++;
 
-        buf[0] = (byte) (0x80 | adr);
-        buf[1] = (byte) 0x01;
-        if (outStream == null) return;
+          buf[0] = (byte) (0x80 | gAdr);
+          buf[1] = (byte) 0x01;
+          if (outStream == null) return;
 
-        outStream.write(buf, 0, 2);
-        if (showRaw)
-          out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
+          outStream.write(buf, 0, 2);
+          if (showRaw)
+            out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
 
-        for (tic[0] = 0; tic[0] < 10; ++tic[0]) {
-          if (inStream.available() > 1) break;
-          delay(15);
-        }
+          for (tic[0] = 0; tic[0] < 10; ++tic[0]) {
+            if (inStream.available() > 1) break;
+            delay(15);
+          }
 
-        if (inStream.available() > 0) {
-          rxCnt = inStream.read(buf, 0, 2);
-          if (rxCnt == 2) {
-            lev = (((int) buf[0]) & 0xff) << 8;
-            lev |= ((int) buf[1]) & 0xff;
-            if (showRaw)
-              out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
+          if (inStream.available() > 0) {
+            rxCnt = inStream.read(buf, 0, 2);
+            if (rxCnt == 2) {
+              lev = (((int) buf[0]) & 0xff) << 8;
+              lev |= ((int) buf[1]) & 0xff;
+              fi.tankData.lev = lev;
+              if (showRaw)
+                out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
 
-            while (inStream.available() > 0)
-              rxCnt = inStream.read(buf, 0, 1);
-            polCnts++;
+              while (inStream.available() > 0)
+                rxCnt = inStream.read(buf, 0, 1);
+              polCnts++;
 
-            buf[0] = (byte) (0x80 | adr);
-            buf[1] = (byte) 0x02;
+              buf[0] = (byte) (0x80 | gAdr);
+              buf[1] = (byte) 0x02;
 
-            outStream.write(buf, 0, 2);
-            if (showRaw)
-              out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
+              outStream.write(buf, 0, 2);
+              if (showRaw)
+                out.append(String.format("\nTx:[%02X][%02X]", buf[0], buf[1]));
 
-            for (tic[1] = 0; tic[1] < 10; ++tic[1]) {
-              if (inStream.available() > 1) break;
-              delay(15);
+              for (tic[1] = 0; tic[1] < 10; ++tic[1]) {
+                if (inStream.available() > 1) break;
+                delay(15);
+              }
+
+              if (inStream.available() > 0) {
+                rxCnt = inStream.read(buf, 0, 2);
+                if (rxCnt == 2) {
+                  if (showRaw)
+                    out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
+
+                  tmp = (((int) buf[1]) & 0x1f) << 8;
+                  tmp |= ((int) buf[0]) & 0xff;
+                  if ((buf[1] & 0x20) == 0) tmp *= -1;
+                  fi.tankData.tmp = tmp * 2;
+                }
+              }
+              outS = String.format("\n%5d Lev %6.3f, Tmp %5.1f, %d,%d",
+                      polCnts, (float) fi.tankData.lev / 384, ((float) fi.tankData.tmp) * 0.1, tic[0], tic[1]);
             }
+          } else {
+            outS = "\n...No-Comm...";
+          }
+        } else if (gType == Sfi.gageTypes.ModBus696) {
+          while (inStream.available() > 0)
+            rxCnt = inStream.read(buf, 0, 1);
+          polCnts++;
 
+          rxBytes = Sfi.makeModbusRequest(gAdr, (byte) 4, 0, 5, buf);
+          outStream.write(buf, 0, 8);
+          if (showRaw) {
+            out.append(String.format("\nTx "));
+            for (int x = 0; x < 8; ++x)
+              out.append(String.format("[%02X]", buf[x]));
+          }
+          delay(15);
 
-            if (inStream.available() > 0) {
-              rxCnt = inStream.read(buf, 0, 2);
-              if (rxCnt == 2) {
-                if (showRaw)
-                  out.append(String.format(" Rx:[%02X][%02X]", buf[0], buf[1]));
+          for (tic[1] = 0; tic[1] < 20; ++tic[1]) {
+            if (inStream.available() >= rxBytes) break;
+            delay(15);
+          }
 
-                tmp = (((int) buf[1]) & 0x1f) << 8;
-                tmp |= ((int) buf[0]) & 0xff;
-                if ((buf[1] & 0x20) == 0) tmp *= -1;
+          if (inStream.available() >= rxBytes) {
+            rxCnt = inStream.read(buf, 0, rxBytes);
+            if (rxCnt == rxBytes) {
+              if (showRaw) {
+                out.append(String.format("\nRx "));
+                for (int x = 0; x < rxBytes; ++x)
+                  out.append(String.format("[%02X]", buf[x]));
+              }
+
+              if (Sfi.verifyModbusMsg(gAdr, (byte) 4, rxBytes, buf)) {
+                Sfi.parseModBus696(fi.tankData, buf);
+                outS = String.format("\n%5d Lev %6.3f, Tmp %5.1f, Bsw %5.1f, %d,%d",
+                        polCnts, (float) fi.tankData.lev / 384, ((float) fi.tankData.tmp) * 0.1,
+                        (float) fi.tankData.bsw / 384, tic[0], tic[1]);
+              } else {
+                outS = String.format("\n Bad-Comm %5d  %d,%d", polCnts, tic[0], tic[1]);
               }
             }
-            if (polCnts < 0) polCnts = 1;
-            if ((polCnts % 25) == 0) out.setText("");
-
-            out.append(String.format("\n%5d Level = %6.3f, Temp %5.1f, tic=%d,%d", polCnts, (float) lev / 384, ((float) tmp) * 0.2, tic[0], tic[1]));
-
+          } else {
+            outS = String.format("\n No-Comm %5d  %d,%d", polCnts, tic[0], tic[1]);
           }
-        } else {
-          out.append("\n...No-Comm...");
-
         }
-
-      } catch (IOException e) {
-        polling = false;
-        String msg = "In Poll() and an exception occurred during write: " + e.getMessage();
-        msg = msg + ".\n\nCheck that the SPP UUID: " + MY_UUID.toString() + " exists on server.\n\n";
-        out.append(msg);
-        // AlertBox("Fatal Error", msg);
-        return;
+        if (polCnts < 0) polCnts = 1;
+        if ((polCnts % 23) == 0) out.setText("");
+        out.append(outS);
+        outS = "";
       }
+    } catch (IOException e) {
+      polling = false;
+      String msg = "In Poll() and an exception occurred during write: " + e.getMessage();
+      msg = msg + ".\n\nCheck that the SPP UUID: " + MY_UUID.toString() + " exists on server.\n\n";
+      out.append(msg);
+      // AlertBox("Fatal Error", msg);
+      btConnect();
+      return;
     }
   }
 
@@ -252,8 +315,80 @@ public class MainActivity extends Activity {
   @Override
   public void onResume() {
     super.onResume();
+    out.append("\n...In onResume...");
+    btConnect();
+  }
+
+  @Override
+  public void onPause() {
+    super.onPause();
+    out.append("\n...In onPause()...");
+    btClose();
+  }
+
+  @Override
+  public void onStop() {
+    super.onStop();
+    out.append("\n...In onStop()...");
+  }
+
+  @Override
+  public void onDestroy() {
+    super.onDestroy();
+    out.append("\n...In onDestroy()...");
+  }
+
+  private void CheckBTState() {
+    // Check for Bluetooth support and then check to make sure it is turned on
+
+    // Emulator doesn't support Bluetooth and will return null
+    if (btAdapter == null) {
+      AlertBox("Fatal Error", "Bluetooth Not supported. Aborting.");
+    } else {
+      if (btAdapter.isEnabled()) {
+        out.append("\n...Bluetooth is enabled...");
+      } else {
+        //Prompt user to turn on Bluetooth
+        Intent enableBtIntent = new Intent(ACTION_REQUEST_ENABLE);
+        startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+      }
+    }
+  }
+
+  public void AlertBox(String title, String message) {
+    new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message + " Press OK to exit.")
+            .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+              public void onClick(DialogInterface arg0, int arg1) {
+                finish();
+              }
+            }).show();
+  }
+
+  private void btClose() {
+
     polling = false;
-    out.append("\n...In onResume...\n...Attempting client connect...");
+    out.append("\n...In btClose()...");
+
+    if (outStream != null) {
+      try {
+        outStream.flush();
+      } catch (IOException e) {
+        AlertBox("Fatal Error", "In onPause() and failed to flush output stream: " + e.getMessage() + ".");
+      }
+    }
+
+    try {
+      btSocket.close();
+    } catch (IOException e2) {
+      AlertBox("Fatal Error", "In onPause() and failed to close socket." + e2.getMessage() + ".");
+    }
+  }
+
+  private void btConnect() {
+    polling = false;
+    out.append("\nbtConnect Attempting client connect...");
 
     // Set up a pointer to the remote node using it's address.
     BluetoothDevice device = btAdapter.getRemoteDevice(address);
@@ -308,68 +443,7 @@ public class MainActivity extends Activity {
 
       AlertBox("Fatal Error", msg);
     }*/
-  }
 
-  @Override
-  public void onPause() {
-    super.onPause();
-
-    polling = false;
-    out.append("\n...In onPause()...");
-
-    if (outStream != null) {
-      try {
-        outStream.flush();
-      } catch (IOException e) {
-        AlertBox("Fatal Error", "In onPause() and failed to flush output stream: " + e.getMessage() + ".");
-      }
-    }
-
-    try {
-      btSocket.close();
-    } catch (IOException e2) {
-      AlertBox("Fatal Error", "In onPause() and failed to close socket." + e2.getMessage() + ".");
-    }
-  }
-
-  @Override
-  public void onStop() {
-    super.onStop();
-    out.append("\n...In onStop()...");
-  }
-
-  @Override
-  public void onDestroy() {
-    super.onDestroy();
-    out.append("\n...In onDestroy()...");
-  }
-
-  private void CheckBTState() {
-    // Check for Bluetooth support and then check to make sure it is turned on
-
-    // Emulator doesn't support Bluetooth and will return null
-    if (btAdapter == null) {
-      AlertBox("Fatal Error", "Bluetooth Not supported. Aborting.");
-    } else {
-      if (btAdapter.isEnabled()) {
-        out.append("\n...Bluetooth is enabled...");
-      } else {
-        //Prompt user to turn on Bluetooth
-        Intent enableBtIntent = new Intent(ACTION_REQUEST_ENABLE);
-        startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
-      }
-    }
-  }
-
-  public void AlertBox(String title, String message) {
-    new AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message + " Press OK to exit.")
-            .setPositiveButton("OK", new DialogInterface.OnClickListener() {
-              public void onClick(DialogInterface arg0, int arg1) {
-                finish();
-              }
-            }).show();
   }
 }
 
